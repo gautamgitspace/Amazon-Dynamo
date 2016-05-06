@@ -43,6 +43,8 @@ public class SimpleDynamoProvider extends ContentProvider
     static final int serverPort = 10000;
     int successorOnePort=0;
     int successorTwoPort=0;
+    int predecessorOnePort=0;
+    int predecessorTwoPort=0;
 	@Override
 	public int delete(Uri uri, String selection, String[] selectionArgs)
 	{
@@ -236,6 +238,99 @@ public class SimpleDynamoProvider extends ContentProvider
         else
         {
             Log.v(TAG,"CASE SPECIFIC KEY");
+            //calculate association
+            String key=selection;
+            int association=0;
+            Iterator iterator = nodeSpace.iterator();
+            while(iterator.hasNext())
+            {
+                try
+                {
+                    String string=(iterator.next()).toString();
+                    if(genHash(key).compareTo(genHash(string)) <=0)
+                    {
+                        association=Integer.parseInt(string);
+                        break;
+                    }
+                }
+                catch (NoSuchAlgorithmException e)
+                {
+                    Log.v(TAG,"Exception in key comparison");
+                }
+            }
+            if(association == 0)
+            {
+                association = nodeSpace.get(0);
+            }
+            //now find self id, successor port 1 and successor port 2 in the array list
+            int myIndex=0;
+            int predecessorOne=0;
+            int predecessorTwo=0;
+
+            for(int i=0; i<nodeSpace.size(); i++)
+            {
+                if(nodeSpace.get(i)==launchPort)
+                {
+                    myIndex=i;
+                    break;
+                }
+            }
+            predecessorOne=(myIndex+4)%5;
+            predecessorTwo=(myIndex+3)%5;
+            predecessorOnePort=nodeSpace.get(predecessorOne);
+            predecessorTwoPort=nodeSpace.get(predecessorTwo);
+            Log.v(TAG,"MY PORT: " + launchPort);
+            Log.v(TAG,"S1 PORT: " + predecessorOnePort);
+            Log.v(TAG,"S2 PORT: " + predecessorTwoPort);
+
+            if(association==launchPort || association==predecessorOnePort || association==predecessorTwoPort)
+            {
+                Log.v(TAG,"local query for specific key");
+                DBHandler dbHandler = new DBHandler(getContext());
+                SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+                cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{selection}, null, null, null, null);
+            }
+            else
+            {
+                try
+                {
+                    Log.v(TAG, "Call to server of association");
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), association * 2);
+                    NodeTalk communication = new NodeTalk("specificKeyOther");
+                    communication.setKey(selection);
+                    communication.setWhoAmI(association);
+                    ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                    outputStream.writeObject(communication);
+                    Log.v(TAG, " specificKeyOther sent to ST on socket " + socket.toString());
+
+
+                    DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
+                    String processDaemonReply = dataInputStream.readUTF();
+
+                    if(processDaemonReply!=null)
+                    {
+                        Log.v(TAG,"daemon reply processed for redirected query as : " + processDaemonReply);
+                        String[] tokenContainer = processDaemonReply.split("-");
+
+                        try {
+                            matrixCursor.addRow(new String[]{tokenContainer[1], tokenContainer[2]});
+                            MergeCursor mergeCursor = new MergeCursor(new Cursor[]{matrixCursor, cursor});
+                            cursor = mergeCursor;
+                            cursor.moveToFirst();
+                            Log.v(TAG, "processDaemonReply as: " + cursor.getString(0) +"-"+ cursor.getString(1));
+                        }
+                        catch (NullPointerException e)
+                        {
+                            e.printStackTrace();
+                        }
+                    }
+                }
+                catch(IOException e)
+                {
+                    e.printStackTrace();
+                }
+
+            }
 
         }
 
@@ -288,6 +383,11 @@ public class SimpleDynamoProvider extends ContentProvider
                             Log.v(TAG, " Language type is redirectedInsert");
                             daemonReply = redirectedReplicatedInsertHandler(communication);
                             Log.v(TAG, "Response code [3] to client sent");
+                        }
+                        if(communication.getLanguage().equals("specificKeyOther"))
+                        {
+                            Log.v(TAG, " Language type is specificKeyOther");
+                            daemonReply = specificKeyHandler(communication);
                         }
                         try
                         {
@@ -388,6 +488,24 @@ public class SimpleDynamoProvider extends ContentProvider
             daemonReply="Insert successful";
             return daemonReply;
         }
+        String specificKeyHandler(NodeTalk nodeTalk)
+        {
+            Cursor cursor = null;
+            String daemonReply="";
+            String key = nodeTalk.getKey();
+            String[] columns = {"key", "value"};
+            Log.v(TAG,"local query for specific key");
+            DBHandler dbHandler = new DBHandler(getContext());
+            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{key}, null, null, null, null);
+
+            cursor.moveToFirst();
+            String value = cursor.getString(1);
+            daemonReply = "singlequery-" + key + "-" +value;
+            Log.d(TAG, "redirectedQueryHandler: reply from redirect query is :"+ daemonReply);
+            return daemonReply;
+        }
+
 
     }
 
