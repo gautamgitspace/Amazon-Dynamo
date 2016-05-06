@@ -19,6 +19,7 @@ import java.util.Comparator;
 import java.util.Formatter;
 import java.util.Iterator;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.locks.ReentrantLock;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -45,10 +46,16 @@ public class SimpleDynamoProvider extends ContentProvider
     int successorTwoPort=0;
     int predecessorOnePort=0;
     int predecessorTwoPort=0;
+    public ReentrantLock tijori =  new ReentrantLock();
+    public ReentrantLock tijori2 = new ReentrantLock();
 	@Override
 	public int delete(Uri uri, String selection, String[] selectionArgs)
 	{
 		// TODO Auto-generated method stub
+        String key=selection;
+        DBHandler dbHandler = new DBHandler(getContext());
+        SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+        sqLiteDatabase.delete("dynamoDB", "key=?", new String[] {key});
 		return 0;
 	}
 
@@ -63,6 +70,7 @@ public class SimpleDynamoProvider extends ContentProvider
 	public Uri insert(Uri uri, ContentValues values)
 	{
 		// TODO Auto-generated method stub
+        tijori.lock();
         String key = (String)values.get("key");
         String value = (String)values.get("value");
         int association=0;
@@ -144,7 +152,7 @@ public class SimpleDynamoProvider extends ContentProvider
             Log.v(TAG, "Redirected Insert call sent to CT");
         }
 
-
+        tijori.unlock();
 		return null;
 	}
 
@@ -234,10 +242,94 @@ public class SimpleDynamoProvider extends ContentProvider
         else if(selection.equals(gDump))
         {
             Log.v(TAG,"CASE GDUMP");
+
+            int iterator;
+            DBHandler dbHandler = new DBHandler(getContext());
+            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+            String hugeString = Integer.toString(launchPort)+ "#";
+            Cursor c2=null;
+            c2 = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
+            //cursor.moveToFirst();
+                            /* http://stackoverflow.com/questions/2810615/how-to-retrieve-data-from-cursor-class */
+            c2.moveToFirst();
+            Log.d(TAG, "query: Cursor count is : "+c2.getCount());
+            if(c2.getCount()>0)
+            {
+                do
+                {
+                    hugeString+=c2.getString(0)+"-"+c2.getString(1)+"*";
+
+                }while (c2.moveToNext());
+            }
+            else
+            {
+                hugeString+="random-random*";
+            }
+            hugeString+="@";
+            for(int i=0;i<nodeSpace.size();i++)
+            {
+                iterator=nodeSpace.get(i);
+                if(iterator!=launchPort)
+                {
+                    //send message to nodeSpace.get(i)
+                    try {
+                        int myContactforLDUMP = nodeSpace.get(i);
+                        Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), myContactforLDUMP * 2);
+                        NodeTalk communication = new NodeTalk("sendYourLDUMP");
+                        ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                        outputStream.writeObject(communication);
+
+                        DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
+                        String processMyContactforLDUMPReply = dataInputStream.readUTF();
+
+                        hugeString+=processMyContactforLDUMPReply+"@";
+                        Log.v(TAG,"@@huge string: "+ hugeString);
+
+
+                    }
+                    catch (IOException e)
+                    {
+                        e.printStackTrace();
+                    }
+
+                }
+            }
+
+            MatrixCursor mc = new MatrixCursor(columns);
+
+            String[] splitter = hugeString.split("@");
+            int i=0;
+
+            while(i<splitter.length)
+            {
+                String[] splitter2 = splitter[i].split("#");
+                Log.v(TAG,"splitter2 at 0: " + splitter2[0] +"splitter2 at 1: "+ splitter2[1]);
+                String[] splitter3 = splitter2[1].split("\\*");
+                int j=0;
+                while(j<splitter3.length)
+                {
+                    String[] splitter4 = splitter3[j].split("-");
+                    if(!splitter4[0].equals("random")){
+                        mc.addRow(new String[] {splitter4[0],splitter4[1]});}
+                    j++;
+                }
+                i++;
+            }
+            try {
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{mc, c2});
+                cursor = mergeCursor;
+                cursor.moveToFirst();
+            }
+            catch (NullPointerException e)
+            {
+                e.printStackTrace();
+            }
+
         }
         else
         {
-            Log.v(TAG,"CASE SPECIFIC KEY");
+           //tijori2.lock();
+            Log.v(TAG, "CASE SPECIFIC KEY : " + selection);
             //calculate association
             String key=selection;
             int association=0;
@@ -285,7 +377,7 @@ public class SimpleDynamoProvider extends ContentProvider
 
             if(association==launchPort || association==predecessorOnePort || association==predecessorTwoPort)
             {
-                Log.v(TAG,"local query for specific key");
+                Log.v(TAG,"local query for specific key: CASE 1 " + key);
                 DBHandler dbHandler = new DBHandler(getContext());
                 SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
                 cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{selection}, null, null, null, null);
@@ -298,6 +390,7 @@ public class SimpleDynamoProvider extends ContentProvider
                     Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), association * 2);
                     NodeTalk communication = new NodeTalk("specificKeyOther");
                     communication.setKey(selection);
+                    Log.v(TAG,"key from query function: " + selection);
                     communication.setWhoAmI(association);
                     ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
                     outputStream.writeObject(communication);
@@ -306,6 +399,7 @@ public class SimpleDynamoProvider extends ContentProvider
 
                     DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
                     String processDaemonReply = dataInputStream.readUTF();
+                    Log.v(TAG,"processDaemonReply is: " +  processDaemonReply);
 
                     if(processDaemonReply!=null)
                     {
@@ -328,6 +422,10 @@ public class SimpleDynamoProvider extends ContentProvider
                 catch(IOException e)
                 {
                     e.printStackTrace();
+                }
+                finally
+                {
+                 //tijori2.unlock();
                 }
 
             }
@@ -388,6 +486,12 @@ public class SimpleDynamoProvider extends ContentProvider
                         {
                             Log.v(TAG, " Language type is specificKeyOther");
                             daemonReply = specificKeyHandler(communication);
+                        }
+                        if(communication.getLanguage().equals("sendYourLDUMP"))
+                        {
+                            Log.v(TAG, " Language type is sendYourLDUMP");
+                            daemonReply = sendYourLDUMPHandler(communication);
+                            Log.v(TAG, " sendYourLDUMP Response to client sent");
                         }
                         try
                         {
@@ -494,16 +598,50 @@ public class SimpleDynamoProvider extends ContentProvider
             String daemonReply="";
             String key = nodeTalk.getKey();
             String[] columns = {"key", "value"};
-            Log.v(TAG,"local query for specific key");
+            Log.v(TAG, "local query for specific key: " + key);
             DBHandler dbHandler = new DBHandler(getContext());
             SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
             cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{key}, null, null, null, null);
 
-            cursor.moveToFirst();
-            String value = cursor.getString(1);
-            daemonReply = "singlequery-" + key + "-" +value;
+            try {
+                Log.v(TAG,"key at handler: " + key);
+                cursor.moveToFirst();
+                String value = cursor.getString(1);
+                daemonReply = "singlequery-" + key + "-" + value;
+                Log.v(TAG, "daemon reply is: " + daemonReply);
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
+            }
             Log.d(TAG, "redirectedQueryHandler: reply from redirect query is :"+ daemonReply);
+
             return daemonReply;
+        }
+        String sendYourLDUMPHandler(NodeTalk nodetalk)
+        {
+            //TODO
+            Cursor cursor = null;
+            String[] columns = {"key","value"};
+            DBHandler dbHandler = new DBHandler(getContext());
+            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
+            String hugeString=Integer.toString(launchPort)+ "#";
+            cursor.moveToFirst();
+            if(cursor.getCount()>0)
+            {
+                do
+                {
+                    hugeString+=cursor.getString(0)+"-"+cursor.getString(1)+"*";
+
+                }while(cursor.moveToNext());
+            }
+            else
+            {
+                hugeString += "random-random*";
+            }
+            Log.v(TAG, "huge string sent from ST :" + hugeString);
+            return  hugeString;
         }
 
 
