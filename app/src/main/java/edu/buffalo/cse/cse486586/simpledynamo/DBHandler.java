@@ -12,7 +12,7 @@ public class DBHandler extends SQLiteOpenHelper
     private static  String dbName="mainTuple";
     private static int version=1;
 
-    private static final String schema = "CREATE TABLE dhtRecords (key DATA, value DATA, association DATA)";
+    private static final String schema = "CREATE TABLE dynamoDB (key DATA, value DATA, association DATA)";
 
     public DBHandler(Context context)
     {
