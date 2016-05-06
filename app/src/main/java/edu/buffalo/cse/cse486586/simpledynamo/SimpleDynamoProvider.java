@@ -34,6 +34,11 @@ import android.util.Log;
 public class SimpleDynamoProvider extends ContentProvider
 {
 
+    ArrayList<Integer> nodeSpace = new ArrayList<Integer>(5);
+    static final String TAG = SimpleDynamoProvider.class.getSimpleName();
+    String lDump="@";
+    String gDump="*";
+
 	@Override
 	public int delete(Uri uri, String selection, String[] selectionArgs)
 	{
@@ -59,6 +64,14 @@ public class SimpleDynamoProvider extends ContentProvider
 	public boolean onCreate()
 	{
 		// TODO Auto-generated method stub
+        nodeSpace.add(5554);
+        nodeSpace.add(5556);
+        nodeSpace.add(5558);
+        nodeSpace.add(5560);
+        nodeSpace.add(5562);
+
+
+
 		return false;
 	}
 
