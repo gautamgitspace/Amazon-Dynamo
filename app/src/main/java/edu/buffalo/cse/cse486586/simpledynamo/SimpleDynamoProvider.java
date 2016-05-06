@@ -75,7 +75,7 @@ public class SimpleDynamoProvider extends ContentProvider
         String value = (String)values.get("value");
         int association=0;
 
-        //send insert request to CT. CT calculates association and forwards to appropriate ST
+        //send insert request to ST. ST Stores it.
 
         /*Sorting array list based on comparator - http://www.tutorialspoint.com/java/java_using_comparator.htm*/
         Collections.sort(nodeSpace, new Comparator<Integer>()
@@ -129,18 +129,74 @@ public class SimpleDynamoProvider extends ContentProvider
             sqLiteDatabase.insert("dynamoDB", null, values);
             sqLiteDatabase.close();
 
-            //PREPARE OBJECT FOR REPLICATED INSERT
+            //PREPARE OBJECT FOR REPLICATED INSERT and SEND TO ST
             NodeTalk communication = new NodeTalk("replicatedInsert");
             communication.setSuccessor1(successorOnePort);
             communication.setSuccessor2(successorTwoPort);
             communication.setKey(key);
             communication.setValue(value);
             communication.setWhoAmI(launchPort);
-            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, communication);
+            try
+            {
+                Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorOnePort * 2);
+                ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                Log.v(TAG, "about to write" + communication + "to stream");
+                outputStream.writeObject(communication);
+                Log.v(TAG, "object written with message: " + communication.getLanguage() +
+                        "and source port " + communication.getWhoAmI() + "and destination port " + communication.getSuccessor1());
+            }
+            catch(Exception e)
+            {
+                e.getMessage();
+            }
+
+            try {
+
+                Socket socket1 = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorTwoPort * 2);
+                ObjectOutputStream outputStream1 = new ObjectOutputStream(socket1.getOutputStream());
+                Log.v(TAG, "about to write" + communication + "to stream");
+                outputStream1.writeObject(communication);
+                Log.v(TAG, "object written with message: " + communication.getLanguage() +
+                        "and source port " + communication.getWhoAmI() + "and destination port " + communication.getSuccessor2());
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
+            }
             Log.v(TAG, "Replicated Insert call sent to CT");
         }
         else if(association!=launchPort)
         {
+            int s1IndexforAssociation=0;
+            int s2IndexforAssociation=0;
+            int s1PortforAssociation=0;
+            int s2PortforAssociation=0;
+            int associationIndex=0;
+
+            for(int i=0; i<nodeSpace.size(); i++)
+            {
+                if(nodeSpace.get(i)==association)
+                {
+                    associationIndex=i;
+                    break;
+                }
+            }
+            s1IndexforAssociation=(associationIndex+1)%5;
+            s2IndexforAssociation=(associationIndex+2)%5;
+            s1PortforAssociation=nodeSpace.get(s1IndexforAssociation);
+            s2PortforAssociation=nodeSpace.get(s2IndexforAssociation);
+
+
+            if(s1PortforAssociation==launchPort || s2PortforAssociation==launchPort)
+            {
+                DBHandler dbHandler = new DBHandler(getContext());
+                SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+                values.put("key", key);
+                values.put("value",value);
+                sqLiteDatabase.insert("dynamoDB", null, values);
+                sqLiteDatabase.close();
+            }
+
             //PREPARE OBJECT FOR REDIRECTED REPLICATED INSERT
             Log.v(TAG, "redirected insert");
             NodeTalk communication = new NodeTalk("redirectedInsert");
@@ -148,8 +204,17 @@ public class SimpleDynamoProvider extends ContentProvider
             communication.setValue(value);
             communication.setWhoAmI(launchPort);
             communication.setAssociation(association);
-            new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, communication);
-            Log.v(TAG, "Redirected Insert call sent to CT");
+            //CALL TO ST
+            try {
+                Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), association * 2);
+                ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                Log.v(TAG, "about to write" + communication + "to stream");
+                outputStream.writeObject(communication);
+                Log.v(TAG, "object written with message: " + communication.getLanguage() +
+                        "and source port" + communication.getWhoAmI() + "and destination port" + communication.getAssociation());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
 
         tijori.unlock();
@@ -391,7 +456,7 @@ public class SimpleDynamoProvider extends ContentProvider
                     NodeTalk communication = new NodeTalk("specificKeyOther");
                     communication.setKey(selection);
                     Log.v(TAG,"key from query function: " + selection);
-                    communication.setWhoAmI(association);
+                    communication.setWhoAmI(launchPort);
                     ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
                     outputStream.writeObject(communication);
                     Log.v(TAG, " specificKeyOther sent to ST on socket " + socket.toString());
@@ -413,7 +478,7 @@ public class SimpleDynamoProvider extends ContentProvider
                             cursor.moveToFirst();
                             Log.v(TAG, "processDaemonReply as: " + cursor.getString(0) +"-"+ cursor.getString(1));
                         }
-                        catch (NullPointerException e)
+                        catch (Exception e)
                         {
                             e.printStackTrace();
                         }
@@ -540,6 +605,9 @@ public class SimpleDynamoProvider extends ContentProvider
         {
             ContentValues values = new ContentValues();
             String daemonReply="";
+            boolean sendFlag1 = true;
+            boolean sendFlag2 =true;
+
             //LOCAL INSERT
             Log.v("TAG", "insert locally");
             DBHandler dbHandler = new DBHandler(getContext());
@@ -550,29 +618,50 @@ public class SimpleDynamoProvider extends ContentProvider
             sqLiteDatabase.insert("dynamoDB", null, values);
             sqLiteDatabase.close();
 
-            //REPLICATE ON SUCCESSORS
-            try
-            {
-                Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorOnePort * 2);
-                NodeTalk communication = new NodeTalk("redirectedReplicatedInsert");
-                communication.setKey(nodeTalk.getKey());
-                communication.setValue(nodeTalk.getValue());
-                ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-                outputStream.writeObject(communication);
-                Log.v(TAG, "Replicate to S1");
 
-                Socket socket1 = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorTwoPort * 2);
-                NodeTalk communication1 = new NodeTalk("redirectedReplicatedInsert");
-                communication1.setKey(nodeTalk.getKey());
-                communication1.setValue(nodeTalk.getValue());
-                ObjectOutputStream outputStream1 = new ObjectOutputStream(socket1.getOutputStream());
-                outputStream1.writeObject(communication1);
-                Log.v(TAG, "Replicate to S2");
-            }
-            catch(IOException e)
+            //REPLICATE ON SUCCESSORS
+            if(successorOnePort==nodeTalk.getWhoAmI())
             {
-                e.printStackTrace();
+                sendFlag1=false;
             }
+            if(successorTwoPort==nodeTalk.getWhoAmI())
+            {
+                sendFlag2=false;
+            }
+
+            if(sendFlag1==true)
+            {
+                try
+                {
+                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorOnePort * 2);
+                    NodeTalk communication = new NodeTalk("redirectedReplicatedInsert");
+                    communication.setKey(nodeTalk.getKey());
+                    communication.setValue(nodeTalk.getValue());
+                    ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                    outputStream.writeObject(communication);
+                    Log.v(TAG, "Replicate to S1");
+                }
+                catch (IOException e)
+                {
+                    e.printStackTrace();
+                }
+            }
+            if(sendFlag2==true)
+            {
+
+                try {
+                    Socket socket1 = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorTwoPort * 2);
+                    NodeTalk communication1 = new NodeTalk("redirectedReplicatedInsert");
+                    communication1.setKey(nodeTalk.getKey());
+                    communication1.setValue(nodeTalk.getValue());
+                    ObjectOutputStream outputStream1 = new ObjectOutputStream(socket1.getOutputStream());
+                    outputStream1.writeObject(communication1);
+                    Log.v(TAG, "Replicate to S2");
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+
 
                 daemonReply = "Redirected Insert successful";
                 return daemonReply;
@@ -589,7 +678,7 @@ public class SimpleDynamoProvider extends ContentProvider
             Log.v(TAG, "Key: " + nodeTalk.getKey() + "inserted at" + launchPort);
             sqLiteDatabase.insert("dynamoDB", null, values);
             sqLiteDatabase.close();
-            daemonReply="Insert successful";
+            daemonReply="Redirect Insert Replicated successfully";
             return daemonReply;
         }
         String specificKeyHandler(NodeTalk nodeTalk)
@@ -604,7 +693,7 @@ public class SimpleDynamoProvider extends ContentProvider
             cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{key}, null, null, null, null);
 
             try {
-                Log.v(TAG,"key at handler: " + key);
+                Log.v(TAG, "key at handler: " + key);
                 cursor.moveToFirst();
                 String value = cursor.getString(1);
                 daemonReply = "singlequery-" + key + "-" + value;
@@ -657,61 +746,9 @@ public class SimpleDynamoProvider extends ContentProvider
             try
             {
                 NodeTalk obj = params[0];
-                if(obj.getLanguage().equals("replicatedInsert"))
-                {
-                    Log.v(TAG, "Handling Simple Replicated Insert at CT");
 
-                    //SEND TO SERVER TASK
-                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), obj.getSuccessor1() * 2);
-                    ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-                    Log.v(TAG, "about to write" + obj + "to stream");
-                    outputStream.writeObject(obj);
-                    Log.v(TAG, "object written with message: " + obj.getLanguage() +
-                            "and source port " + obj.getWhoAmI() + "and destination port " + obj.getSuccessor1());
-
-                    Socket socket1 = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), obj.getSuccessor2() * 2);
-                    ObjectOutputStream outputStream1 = new ObjectOutputStream(socket1.getOutputStream());
-                    Log.v(TAG, "about to write" + obj + "to stream");
-                    outputStream1.writeObject(obj);
-                    Log.v(TAG, "object written with message: " + obj.getLanguage() +
-                            "and source port " + obj.getWhoAmI() + "and destination port " + obj.getSuccessor2());
-
-                    DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
-                    String reply = dataInputStream.readUTF();
-                    if (reply != null)
-                    {
-                        Log.v(TAG, "Reply received from server: " + reply);
-                    }
-                    else
-                    {
-                        Log.v(TAG, "Nothing received from server");
-                    }
-
-                }
-                if(obj.getLanguage().equals("redirectedInsert"))
-                {
-                    Log.v(TAG, "Handling Redirected Insert at CT");
-                    Log.v(TAG, "###sending to association: " + obj.getAssociation());
-                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), obj.getAssociation() * 2);
-                    ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-                    Log.v(TAG, "about to write" + obj + "to stream");
-                    outputStream.writeObject(obj);
-                    Log.v(TAG, "object written with message: " + obj.getLanguage() +
-                            "and source port" + obj.getWhoAmI() + "and destination port" + obj.getAssociation());
-
-                    DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
-                    String reply = dataInputStream.readUTF();
-                    if (reply != null)
-                    {
-                        Log.v(TAG, "Reply received from server: " + reply);
-                    }
-                    else
-                    {
-                        Log.v(TAG, "Nothing received from server");
-                    }
-                }
             }
-            catch(IOException e)
+            catch(Exception e)
             {
                 e.printStackTrace();
             }
