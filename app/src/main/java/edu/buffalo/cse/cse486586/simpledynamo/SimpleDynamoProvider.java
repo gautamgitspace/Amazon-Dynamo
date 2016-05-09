@@ -1,8 +1,12 @@
 package edu.buffalo.cse.cse486586.simpledynamo;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
@@ -30,6 +34,7 @@ import android.database.MergeCursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.provider.ContactsContract;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 
@@ -47,15 +52,24 @@ public class SimpleDynamoProvider extends ContentProvider
     int predecessorOnePort=0;
     int predecessorTwoPort=0;
     public ReentrantLock mutex =  new ReentrantLock();
+    Context contextType;
 
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs)
     {
         // TODO Auto-generated method stub
         String key=selection;
-        DBHandler dbHandler = new DBHandler(getContext());
-        SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-        sqLiteDatabase.delete("dynamoDB", "key=?", new String[] {key});
+
+
+        contextType=getContext();
+        try
+        {
+            contextType.deleteFile(key);
+        }
+        catch(Exception e)
+        {
+            e.printStackTrace();
+        }
 
         for(int i=0;i<nodeSpace.size();i++)
         {
@@ -70,7 +84,8 @@ public class SimpleDynamoProvider extends ContentProvider
                     Log.v(TAG, "about to send distributedDelete to stream");
                     outputStream.writeObject(communication);
                     Log.v(TAG, "object written with message: " + communication.getLanguage() +
-                            "and source port " + communication.getWhoAmI() + "and destination port " + communication.getSuccessor1());
+                    "and source port " + communication.getWhoAmI() + "and destination port " + communication.getSuccessor1());
+
                     socket.close();
                 }
                 catch(Exception e)
@@ -104,23 +119,6 @@ public class SimpleDynamoProvider extends ContentProvider
         int s1PortForAssociation=0;
         int s2PortForAssociation=0;
         int associationIndex=0;
-        //boolean flag=false;
-
-//        /*Sorting array list based on comparator - http://www.tutorialspoint.com/java/java_using_comparator.htm*/
-//        Collections.sort(nodeSpace, new Comparator<Integer>()
-//        {
-//            @Override
-//            public int compare(Integer here, Integer there) {
-//                int compareDecision = 0;
-//                try {
-//                    compareDecision = genHash(Integer.toString(here)).compareTo(genHash(Integer.toString(there)));
-//                }
-//                catch (NoSuchAlgorithmException e) {
-//                    Log.e(TAG, "got exception in comparator");
-//                }
-//                return compareDecision;
-//            }
-//        });
 
         Iterator iterator = nodeSpace.iterator();
         while(iterator.hasNext())
@@ -166,34 +164,39 @@ public class SimpleDynamoProvider extends ContentProvider
             //LOCAL INSERT HERE ONLY
             Log.v(TAG,"INSERT BLOCK 1");
             Log.v(TAG,"association = launch port case. Key: " + key + "inserted locally at " + association);
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            values.put("key", key);
-            values.put("value",value);
-            sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-            sqLiteDatabase.close();
+            try
+            {
+                FileOutputStream fos = getContext().openFileOutput(key, Context.MODE_PRIVATE);
+                fos.write(value.getBytes());
+                fos.close();
+            }catch(IOException ioe){
+                Log.e("Insert", ioe.getMessage());
+            }catch(NullPointerException npe){
+                Log.e("Insert", npe.getMessage());
+            }catch(Exception e){
+                Log.e("Insert", e.getMessage());
+            }
 
         }
         if(association!=launchPort)
         {
             Log.v(TAG,"INSERT BLOCK 2");
             //PREPARE OBJECT FOR REPLICATED INSERT and SEND TO ST
-//            NodeTalk communication = new NodeTalk("replicatedInsert");
-//            communication.setKey(key);
-//            communication.setValue(value);
+            NodeTalk communication = new NodeTalk("replicatedInsert");
+            communication.setKey(key);
+            communication.setValue(value);
 
-            String parcel="replicatedInsert-" + key + "-" + value;
+            //String parcel="replicatedInsert-" + key + "-" + value;
 
 
             try
             {
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), association * 2);
-                //ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-                //outputStream.writeObject(communication);
-                DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
-                dataOutputStream.writeUTF(parcel);
-                //Log.v(TAG, "object written with message: " + communication.getLanguage() +
-                        //"and source port " + communication.getWhoAmI() + " and destination port " + association);
+                ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                outputStream.writeObject(communication);
+
+                Log.v(TAG, "object written with message: " + communication.getLanguage() +
+                "and source port " + communication.getWhoAmI() + " and destination port " + association);
 
                 Log.v(TAG, "parcel sent with message replicatedInsert to " + association);
             }
@@ -206,20 +209,19 @@ public class SimpleDynamoProvider extends ContentProvider
         if(s1PortForAssociation!=launchPort)
         {
             Log.v(TAG,"INSERT BLOCK 3");
-//            NodeTalk communication = new NodeTalk("replicatedInsert");
-//            communication.setKey(key);
-//            communication.setValue(value);
-            String parcel="replicatedInsert-" + key + "-" + value;
+            NodeTalk communication = new NodeTalk("replicatedInsert");
+            communication.setKey(key);
+            communication.setValue(value);
+            //String parcel="replicatedInsert-" + key + "-" + value;
             try
             {
                 Log.v(TAG,"inside send block for successorOnePort");
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), s1PortForAssociation * 2);
-                //ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-                //outputStream.writeObject(communication);
-                DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
-                dataOutputStream.writeUTF(parcel);
-                //Log.v(TAG, "object written with message: " + communication.getLanguage() +
-                  //      "and source port " + communication.getWhoAmI() + " and destination port " + s1PortForAssociation);
+                ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                outputStream.writeObject(communication);
+
+                Log.v(TAG, "object written with message: " + communication.getLanguage() +
+                      "and source port " + communication.getWhoAmI() + " and destination port " + s1PortForAssociation);
                 Log.v(TAG, "parcel sent with message replicatedInsert to " + s1PortForAssociation);
             }
             catch(Exception e)
@@ -232,21 +234,20 @@ public class SimpleDynamoProvider extends ContentProvider
         {
 
             Log.v(TAG,"INSERT BLOCK 4");
-//            NodeTalk communication = new NodeTalk("replicatedInsert");
-//            communication.setKey(key);
-//            communication.setValue(value);
+            NodeTalk communication = new NodeTalk("replicatedInsert");
+            communication.setKey(key);
+            communication.setValue(value);
 
-            String parcel="replicatedInsert-" + key + "-" + value;
+            //String parcel="replicatedInsert-" + key + "-" + value;
             try
             {
                 Log.v(TAG,"inside send block for successorOnePort");
                 Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), s2PortForAssociation * 2);
-                //ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-                //outputStream.writeObject(communication);
-                DataOutputStream dataOutputStream = new DataOutputStream(socket.getOutputStream());
-                dataOutputStream.writeUTF(parcel);
-                //Log.v(TAG, "object written with message: " + communication.getLanguage() +
-                  //      "and source port " + communication.getWhoAmI() + " and destination port " + s2PortForAssociation);
+                ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
+                outputStream.writeObject(communication);
+
+                Log.v(TAG, "object written with message: " + communication.getLanguage() +
+                      "and source port " + communication.getWhoAmI() + " and destination port " + s2PortForAssociation);
                 Log.v(TAG, "parcel sent with message replicatedInsert to " + s2PortForAssociation);
 
             }
@@ -335,28 +336,102 @@ public class SimpleDynamoProvider extends ContentProvider
         Cursor cursor=null;
         String[] columns = {"key", "value"};
         MatrixCursor matrixCursor=new MatrixCursor(columns);
+        File [] array = new File[1];
 
         if(selection.equals(lDump))
         {
             Log.v(TAG,"CASE LDUMP");
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
-            cursor.moveToFirst();
+            contextType=getContext();
+            File file = new File(String.valueOf(contextType.getFilesDir()));
+            array = file.listFiles();
+
+            for(int i=0; i<array.length;i++)
+            {
+                String strKey = array[i].getName();
+                String msgValue = "";
+
+                try {
+                    FileInputStream fis = getContext().openFileInput(strKey);
+                    BufferedInputStream bis = new BufferedInputStream(fis);
+                    int temp;
+                    while ((temp = bis.read()) != -1) {
+                        msgValue += (char) temp;
+                    }
+                    bis.close();
+                } catch (IOException ioe) {
+                    Log.e("Query", ioe.getMessage());
+                } catch (NullPointerException npe) {
+                    Log.e("Query", npe.getMessage());
+                } catch (Exception e) {
+                    Log.e("Query", e.getMessage());
+                }
+
+                matrixCursor.addRow(new String[]{strKey, msgValue});
+            }
+            //Cursor c2=null;
+            Cursor c3=null;
+            try {
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{matrixCursor, c3});
+                cursor = mergeCursor;
+                cursor.moveToFirst();
+            }
+            catch (NullPointerException e)
+            {
+                e.printStackTrace();
+            }
+
+
         }
         else if(selection.equals(gDump))
         {
             Log.v(TAG,"CASE GDUMP");
 
-            int iterator;
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
+            contextType=getContext();
+            File file = new File(String.valueOf(contextType.getFilesDir()));
+            array = file.listFiles();
+
+            for(int i=0; i<array.length;i++)
+            {
+                String strKey = array[i].getName();
+                String msgValue = "";
+
+                try {
+                    FileInputStream fis = getContext().openFileInput(strKey);
+                    BufferedInputStream bis = new BufferedInputStream(fis);
+                    int temp;
+                    while ((temp = bis.read()) != -1) {
+                        msgValue += (char) temp;
+                    }
+                    bis.close();
+                } catch (IOException ioe) {
+                    Log.e("Query", ioe.getMessage());
+                } catch (NullPointerException npe) {
+                    Log.e("Query", npe.getMessage());
+                } catch (Exception e) {
+                    Log.e("Query", e.getMessage());
+                }
+
+                matrixCursor.addRow(new String[]{strKey, msgValue});
+            }
+
+
             String hugeString = Integer.toString(launchPort)+ "#";
             Cursor c2=null;
-            c2 = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
-            //cursor.moveToFirst();
-                            /* http://stackoverflow.com/questions/2810615/how-to-retrieve-data-from-cursor-class */
-            c2.moveToFirst();
+            Cursor c3=null;
+            int iterator;
+
+
+
+            try {
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{matrixCursor, c3});
+                c2 = mergeCursor;
+                c2.moveToFirst();
+            }
+            catch (NullPointerException e)
+            {
+                e.printStackTrace();
+            }
+
             Log.d(TAG, "query: Cursor count is : "+c2.getCount());
             if(c2.getCount()>0)
             {
@@ -436,6 +511,7 @@ public class SimpleDynamoProvider extends ContentProvider
             Log.v(TAG, "CASE SPECIFIC KEY : " + selection);
             //calculate association
             String key=selection;
+            String msgValue="";
             int association=0;
             Iterator iterator = nodeSpace.iterator();
             while(iterator.hasNext())
@@ -479,12 +555,41 @@ public class SimpleDynamoProvider extends ContentProvider
             Log.v(TAG,"Predecessor 1 PORT: " + predecessorOnePort);
             Log.v(TAG,"Predecessor 2 PORT: " + predecessorTwoPort);
 
-            if(association==launchPort || association==predecessorOnePort || association==predecessorTwoPort)
-            {
-                Log.v(TAG,"local query for specific key: CASE 1 " + key);
-                DBHandler dbHandler = new DBHandler(getContext());
-                SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-                cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{selection}, null, null, null, null);
+            if(association==launchPort || association==predecessorOnePort || association==predecessorTwoPort) {
+                Log.v(TAG, "local query for specific key: CASE 1 " + key);
+
+                try {
+                    FileInputStream fis = getContext().openFileInput(selection);
+                    BufferedInputStream bis= new BufferedInputStream(fis);
+                    int temp;
+                    while((temp= bis.read())!=-1){
+                        msgValue+= (char)temp;
+                    }
+                    bis.close();
+                }catch(IOException ioe){
+                    Log.e("Query",ioe.getMessage());
+                }catch(NullPointerException npe){
+                    Log.e("Query",npe.getMessage());
+                }catch(Exception e){
+                    Log.e("Query",e.getMessage());
+                }
+                String[] columnNames= {"key", "value"};
+                MatrixCursor msgCursor= new MatrixCursor(columnNames);
+                msgCursor.addRow(new String[]{selection, msgValue});
+
+                Cursor c2=null;
+
+                try
+                {
+                    MergeCursor mergeCursor = new MergeCursor(new Cursor[]{msgCursor, c2});
+                    cursor = mergeCursor;
+                    cursor.moveToFirst();
+                }
+                catch (NullPointerException e)
+                {
+                    e.printStackTrace();
+                }
+
             }
             else
             {
@@ -607,72 +712,16 @@ public class SimpleDynamoProvider extends ContentProvider
                 {
                     Log.v(TAG,"#SERVER " + launchPort + " LISTENING FOR INCOMING CONNECTIONS#");
                     socket=serverSocket.accept();
+
                     ObjectInputStream inputStream = new ObjectInputStream(socket.getInputStream());
                     NodeTalk communication = (NodeTalk)inputStream.readObject();
-
-                    DataInputStream dataInputStream = new DataInputStream(socket.getInputStream());
-                    String parcelReceived = dataInputStream.readUTF();
-                    String token[] = parcelReceived.split("-");
-                    String key=token[1];
-                    String value=token[2];
-
-                    ContentValues values = new ContentValues();
-                    DBHandler dbHandler = new DBHandler(getContext());
-                    SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-
-                    values.put("key",key);
-                    values.put("value", value);
-                    sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-                    Log.v(TAG, "Key: " + key + " replicated at " + launchPort);
-                    sqLiteDatabase.close();
-
 
                     if(communication!=null)
                     {
                         if(communication.getLanguage().equals("replicatedInsert"))
                         {
                             Log.v(TAG, " Language type is replicatedInsert ");
-                           // daemonReply = insertHandler(communication);
-//                            try
-//                            {
-//                                DataOutputStream dataOutPutStream = new DataOutputStream(socket.getOutputStream());
-//                                dataOutPutStream.writeUTF(daemonReply);
-//                                Log.v(TAG,"daemonReply written to output stream for Language Type: " + communication.getLanguage());
-//                            }
-//                            catch (IOException e)
-//                            {
-//                                e.printStackTrace();
-//                            }
-                        }
-                        if(communication.getLanguage().equals("redirectedInsert"))
-                        {
-                            Log.v(TAG, " Language type is redirectedInsert");
-                            //daemonReply = redirectedInsertHandler(communication);
-//                            try
-//                            {
-//                                DataOutputStream dataOutPutStream = new DataOutputStream(socket.getOutputStream());
-//                                dataOutPutStream.writeUTF(daemonReply);
-//                                Log.v(TAG, "daemonReply written to output stream for Language Type: " + communication.getLanguage());
-//                            }
-//                            catch (IOException e)
-//                            {
-//                                e.printStackTrace();
-//                            }
-                        }
-                        if(communication.getLanguage().equals("redirectedReplicatedInsert"))
-                        {
-                            Log.v(TAG, " Language type is redirectedReplicatedInsert");
-                            //daemonReply = redirectedReplicatedInsertHandler(communication);
-//                            try
-//                            {
-//                                DataOutputStream dataOutPutStream = new DataOutputStream(socket.getOutputStream());
-//                                dataOutPutStream.writeUTF(daemonReply);
-//                                Log.v(TAG, "daemonReply written to output stream for Language Type: " + communication.getLanguage());
-//                            }
-//                            catch (IOException e)
-//                            {
-//                                e.printStackTrace();
-//                            }
+                            daemonReply = insertHandler(communication);
                         }
                         if(communication.getLanguage().equals("specificKeyOther"))
                         {
@@ -692,7 +741,7 @@ public class SimpleDynamoProvider extends ContentProvider
                         if(communication.getLanguage().equals("sendYourLDUMP"))
                         {
                             Log.v(TAG, " Language type is sendYourLDUMP");
-                            daemonReply = sendYourLDUMPHandler(communication);
+                            daemonReply = sendYourLDUMPHandler();
                             try
                             {
                                 DataOutputStream dataOutPutStream = new DataOutputStream(socket.getOutputStream());
@@ -703,21 +752,6 @@ public class SimpleDynamoProvider extends ContentProvider
                             {
                                 e.printStackTrace();
                             }
-                        }
-                        if(communication.getLanguage().equals("crashInsert"))
-                        {
-                            Log.v(TAG, " Language type is crashInsert");
-                            //daemonReply = crashInsertHandler(communication);
-//                            try
-//                            {
-//                                DataOutputStream dataOutPutStream = new DataOutputStream(socket.getOutputStream());
-//                                dataOutPutStream.writeUTF(daemonReply);
-//                                Log.v(TAG, "daemonReply written to output stream for Language Type: " + communication.getLanguage());
-//                            }
-//                            catch (IOException e)
-//                            {
-//                                e.printStackTrace();
-//                            }
                         }
                         if(communication.getLanguage().equals("forSuccessor"))
                         {
@@ -759,13 +793,13 @@ public class SimpleDynamoProvider extends ContentProvider
 
                 }
             }
+            catch(ClassNotFoundException c)
+            {
+                c.printStackTrace();
+            }
             catch(IOException e)
             {
                 e.printStackTrace();
-            }
-            catch(ClassNotFoundException c)
-            {
-                c.getMessage();
             }
 
             return null;
@@ -775,134 +809,122 @@ public class SimpleDynamoProvider extends ContentProvider
         {
             ContentValues values = new ContentValues();
             String daemonReply="";
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
 
-            values.put("key",nodeTalk.getKey());
-            values.put("value", nodeTalk.getValue());
-            sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-            Log.v(TAG, "Key: " + nodeTalk.getKey() + " replicated at " + launchPort);
-            sqLiteDatabase.close();
+            try
+            {
+                FileOutputStream fos = getContext().openFileOutput(nodeTalk.getKey(), Context.MODE_PRIVATE);
+                fos.write(nodeTalk.getValue().getBytes());
+                fos.close();
+            }catch(IOException ioe){
+                Log.e("Insert", ioe.getMessage());
+            }catch(NullPointerException npe){
+                Log.e("Insert", npe.getMessage());
+            }catch(Exception e){
+                Log.e("Insert", e.getMessage());
+            }
+
+
             daemonReply="Insert successful";
             return daemonReply;
         }
 
-//        String redirectedInsertHandler(NodeTalk nodeTalk)
-//        {
-//            ContentValues values = new ContentValues();
-//            String daemonReply="";
-//            boolean sendFlag1 = true;
-//            boolean sendFlag2 = true;
-//
-//            //LOCAL INSERT
-//            DBHandler dbHandler = new DBHandler(getContext());
-//            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-//            values.put("key", nodeTalk.getKey());
-//            values.put("value",nodeTalk.getValue());
-//            Log.v(TAG, "Key: " + nodeTalk.getKey() + " inserted at " + launchPort);
-//            sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-//            sqLiteDatabase.close();
-//
-//
-//            //REPLICATE ON SUCCESSORS
-//            if(successorOnePort==nodeTalk.getWhoAmI())
-//            {
-//                sendFlag1=false;
-//            }
-//            if(successorTwoPort==nodeTalk.getWhoAmI())
-//            {
-//                sendFlag2=false;
-//            }
-//
-//            if(sendFlag1==true)
-//            {
-//                try
-//                {
-//                    Socket socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorOnePort * 2);
-//                    NodeTalk communication = new NodeTalk("redirectedReplicatedInsert");
-//                    communication.setKey(nodeTalk.getKey());
-//                    communication.setValue(nodeTalk.getValue());
-//                    ObjectOutputStream outputStream = new ObjectOutputStream(socket.getOutputStream());
-//                    outputStream.writeObject(communication);
-//                    Log.v(TAG, "Replicate to S1: " + successorOnePort);
-//                }
-//                catch (IOException e)
-//                {
-//                    e.printStackTrace();
-//                }
-//            }
-//            if(sendFlag2==true)
-//            {
-//
-//                try {
-//                    Socket socket1 = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), successorTwoPort * 2);
-//                    NodeTalk communication1 = new NodeTalk("redirectedReplicatedInsert");
-//                    communication1.setKey(nodeTalk.getKey());
-//                    communication1.setValue(nodeTalk.getValue());
-//                    ObjectOutputStream outputStream1 = new ObjectOutputStream(socket1.getOutputStream());
-//                    outputStream1.writeObject(communication1);
-//                    Log.v(TAG, "Replicate to S2: " + successorTwoPort);
-//                }
-//                catch (IOException e)
-//                {
-//                    e.printStackTrace();
-//                }
-//            }
-//
-//
-//            daemonReply = "Redirected Insert successful";
-//            return daemonReply;
-//        }
-//        String redirectedReplicatedInsertHandler(NodeTalk nodeTalk)
-//        {
-//            ContentValues values = new ContentValues();
-//            String daemonReply="";
-//            DBHandler dbHandler = new DBHandler(getContext());
-//            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-//
-//            values.put("key", nodeTalk.getKey());
-//            values.put("value", nodeTalk.getValue());
-//            Log.v(TAG, "Key: " + nodeTalk.getKey() + " replicated at " + launchPort);
-//            sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-//            sqLiteDatabase.close();
-//            daemonReply="Redirect Insert Replicated successfully";
-//            return daemonReply;
-//        }
+
         String specificKeyHandler(NodeTalk nodeTalk)
         {
             Cursor cursor = null;
             String daemonReply="";
             String key = nodeTalk.getKey();
-            String[] columns = {"key", "value"};
+            String msgValue="";
             Log.v(TAG, "local query for specific key: " + key);
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, "key=?", new String[]{key}, null, null, null, null);
+
+            try {
+                FileInputStream fis = getContext().openFileInput(key);
+                BufferedInputStream bis= new BufferedInputStream(fis);
+                int temp;
+                while((temp= bis.read())!=-1){
+                    msgValue+= (char)temp;
+                }
+                bis.close();
+            }catch(IOException ioe){
+                Log.e("Query",ioe.getMessage());
+            }catch(NullPointerException npe){
+                Log.e("Query",npe.getMessage());
+            }catch(Exception e){
+                Log.e("Query",e.getMessage());
+            }
+            String[] columnNames= {"key", "value"};
+            MatrixCursor msgCursor= new MatrixCursor(columnNames);
+            msgCursor.addRow(new String[]{key, msgValue});
+
+            Cursor c2=null;
 
             try
             {
-                Log.v(TAG, "key at specificKeyHandler: " + key);
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{msgCursor, c2});
+                cursor = mergeCursor;
                 cursor.moveToFirst();
-                String value = cursor.getString(1);
-                daemonReply = "singlequery-" + key + "-" + value;
-                Log.v(TAG, "specificKeyHandler returned: " + daemonReply);
             }
-            catch(Exception e)
+            catch (NullPointerException e)
             {
                 e.printStackTrace();
             }
 
+            Log.v(TAG, "key at specificKeyHandler: " + key);
+            String value = cursor.getString(1);
+            daemonReply = "singlequery-" + key + "-" + value;
+            Log.v(TAG, "specificKeyHandler returned: " + daemonReply);
+
+
             return daemonReply;
         }
-        String sendYourLDUMPHandler(NodeTalk nodetalk)
+        String sendYourLDUMPHandler()
         {
             Cursor cursor = null;
             String[] columns = {"key","value"};
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
+            File array[] = new File[1];
+            MatrixCursor matrixCursor = new MatrixCursor(columns);
+
+            Log.v(TAG,"CASE LDUMP IN LDUMPHANDLER");
+            contextType=getContext();
+            File file = new File(String.valueOf(contextType.getFilesDir()));
+            array = file.listFiles();
+
+            for(int i=0; i<array.length;i++)
+            {
+                String strKey = array[i].getName();
+                String msgValue = "";
+
+                try {
+                    FileInputStream fis = getContext().openFileInput(strKey);
+                    BufferedInputStream bis = new BufferedInputStream(fis);
+                    int temp;
+                    while ((temp = bis.read()) != -1) {
+                        msgValue += (char) temp;
+                    }
+                    bis.close();
+                } catch (IOException ioe) {
+                    Log.e("Query", ioe.getMessage());
+                } catch (NullPointerException npe) {
+                    Log.e("Query", npe.getMessage());
+                } catch (Exception e) {
+                    Log.e("Query", e.getMessage());
+                }
+
+                matrixCursor.addRow(new String[]{strKey, msgValue});
+            }
+
+            Cursor c3=null;
+            try {
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{matrixCursor, c3});
+                cursor = mergeCursor;
+                cursor.moveToFirst();
+            }
+            catch (NullPointerException e)
+            {
+                e.printStackTrace();
+            }
+
             String hugeString=Integer.toString(launchPort)+ "#";
-            cursor.moveToFirst();
             if(cursor.getCount()>0)
             {
                 do
@@ -918,34 +940,56 @@ public class SimpleDynamoProvider extends ContentProvider
             Log.v(TAG, "huge string sent from ST :" + hugeString);
             return  hugeString;
         }
-        String crashInsertHandler(NodeTalk nodeTalk)
-        {
-
-            ContentValues values = new ContentValues();
-            String daemonReply="";
-            Log.v(TAG, "crashInsertHandler");
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            values.put("key", nodeTalk.getKey());
-            values.put("value", nodeTalk.getValue());
-            Log.v(TAG, "Key: " + nodeTalk.getKey() + " inserted at " + launchPort);
-            sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-            sqLiteDatabase.close();
-            daemonReply="crash insert case done";
-            return  daemonReply;
-        }
         String forPPDHandler(NodeTalk nodeTalk)
         {
             Cursor cursor=null;
-            String hugeString="myldump*";
+            String hugeString="myldump&";
             String[] columns = {"key", "value"};
             MatrixCursor matrixCursor=new MatrixCursor(columns);
 
+            File array[] = new File[1];
+
             Log.v(TAG, "CASE LDUMP");
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
-            cursor.moveToFirst();
+            contextType=getContext();
+            File file = new File(String.valueOf(contextType.getFilesDir()));
+            array = file.listFiles();
+
+            for(int i=0; i<array.length;i++)
+            {
+                String strKey = array[i].getName();
+                String msgValue = "";
+
+                try {
+                    FileInputStream fis = getContext().openFileInput(strKey);
+                    BufferedInputStream bis = new BufferedInputStream(fis);
+                    int temp;
+                    while ((temp = bis.read()) != -1) {
+                        msgValue += (char) temp;
+                    }
+                    bis.close();
+                } catch (IOException ioe) {
+                    Log.e("Query", ioe.getMessage());
+                } catch (NullPointerException npe) {
+                    Log.e("Query", npe.getMessage());
+                } catch (Exception e) {
+                    Log.e("Query", e.getMessage());
+                }
+
+                matrixCursor.addRow(new String[]{strKey, msgValue});
+            }
+
+            Cursor c3=null;
+            try {
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{matrixCursor, c3});
+                cursor = mergeCursor;
+                cursor.moveToFirst();
+            }
+            catch (NullPointerException e)
+            {
+                e.printStackTrace();
+            }
+
+
             int association=0;
             Log.v(TAG,"Recover request for ppd recvd at " + launchPort + " from " + nodeTalk.getWhoAmI());
 
@@ -977,7 +1021,7 @@ public class SimpleDynamoProvider extends ContentProvider
 
                     if(association==launchPort)
                     {
-                        hugeString += cursor.getString(0) + "-" + cursor.getString(1) + "*";
+                        hugeString += cursor.getString(0) + "-" + cursor.getString(1) + "&";
                     }
 
                 }while(cursor.moveToNext());
@@ -995,12 +1039,50 @@ public class SimpleDynamoProvider extends ContentProvider
             int myPosition=0;
             int firstPosition=0;
             int firstPort=0;
-            String hugeString2="myxdump*";
+            String hugeString2="myxdump&";
 
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            cursor = sqLiteDatabase.query(true, "dynamoDB", columns, null, null, null, null, null, null);
-            cursor.moveToFirst();
+            File array[] = new File[1];
+
+
+            contextType=getContext();
+            File file = new File(String.valueOf(contextType.getFilesDir()));
+            array = file.listFiles();
+
+            for(int i=0; i<array.length;i++)
+            {
+                String strKey = array[i].getName();
+                String msgValue = "";
+
+                try {
+                    FileInputStream fis = getContext().openFileInput(strKey);
+                    BufferedInputStream bis = new BufferedInputStream(fis);
+                    int temp;
+                    while ((temp = bis.read()) != -1) {
+                        msgValue += (char) temp;
+                    }
+                    bis.close();
+                } catch (IOException ioe) {
+                    Log.e("Query", ioe.getMessage());
+                } catch (NullPointerException npe) {
+                    Log.e("Query", npe.getMessage());
+                } catch (Exception e) {
+                    Log.e("Query", e.getMessage());
+                }
+
+                matrixCursor.addRow(new String[]{strKey, msgValue});
+            }
+
+            Cursor c3=null;
+            try {
+                MergeCursor mergeCursor = new MergeCursor(new Cursor[]{matrixCursor, c3});
+                cursor = mergeCursor;
+                cursor.moveToFirst();
+            }
+            catch (NullPointerException e)
+            {
+                e.printStackTrace();
+            }
+
             int association=0;
 
             Log.v(TAG,"Recover request for successor recvd at " + launchPort + " from " + nodeTalk.getWhoAmI());
@@ -1047,7 +1129,7 @@ public class SimpleDynamoProvider extends ContentProvider
 
                     if(association==nodeTalk.getWhoAmI() || association == firstPort)
                     {
-                        hugeString2 += cursor.getString(0) + "-" + cursor.getString(1) + "*";
+                        hugeString2 += cursor.getString(0) + "-" + cursor.getString(1) + "&";
                     }
 
                 }while(cursor.moveToNext());
@@ -1057,10 +1139,15 @@ public class SimpleDynamoProvider extends ContentProvider
         }
         void distributedDeleteHandler(NodeTalk nodeTalk)
         {
-            String key=nodeTalk.getSelection();
-            DBHandler dbHandler = new DBHandler(getContext());
-            SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-            sqLiteDatabase.delete("dynamoDB", "key=?", new String[] {key});
+            String key=nodeTalk.getKey();
+            try
+            {
+                contextType.deleteFile(key);
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
+            }
         }
 
 
@@ -1106,11 +1193,7 @@ public class SimpleDynamoProvider extends ContentProvider
                     {
                         NodeTalk obj2 = new NodeTalk("forPPD");
                         obj2.setWhoAmI(launchPort);
-                        obj2.setKey("random key");
-                        obj2.setValue("random value for random key");
-                        obj2.setSuccessor2(22);
-                        obj.setSuccessor1(44);
-                        obj2.setSelection("random selection");
+
                         Socket socket2 = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}), ppdP * 2);
                         ObjectOutputStream outputStream2 = new ObjectOutputStream(socket2.getOutputStream());
                         outputStream2.writeObject(obj2);
@@ -1122,17 +1205,26 @@ public class SimpleDynamoProvider extends ContentProvider
 
                         if(reply2!=null)
                         {
-                            String[] tokenContainer = reply2.split("\\*");
+                            String[] tokenContainer = reply2.split("&");
                             for(int i=1;i<tokenContainer.length;i++)
                             {
                                 ContentValues values = new ContentValues();
                                 String[] random = tokenContainer[i].split("-");
-                                DBHandler dbHandler = new DBHandler(getContext());
-                                SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-                                values.put("key", random[0]);
-                                values.put("value",random[1]);
-                                sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values, sqLiteDatabase.CONFLICT_REPLACE);
-                                sqLiteDatabase.close();
+
+
+                                try
+                                {
+                                    FileOutputStream fos = getContext().openFileOutput(random[0], Context.MODE_PRIVATE);
+                                    fos.write(random[1].getBytes());
+                                    fos.close();
+                                }catch(IOException ioe){
+                                    Log.e("Insert", ioe.getMessage());
+                                }catch(NullPointerException npe){
+                                    Log.e("Insert", npe.getMessage());
+                                }catch(Exception e){
+                                    Log.e("Insert", e.getMessage());
+                                }
+
                             }
                         }
                     }
@@ -1155,17 +1247,25 @@ public class SimpleDynamoProvider extends ContentProvider
 
                         if(reply!=null)
                         {
-                            String[] tokenContainer = reply.split("\\*");
+                            String[] tokenContainer = reply.split("&");
                             for(int i=1;i<tokenContainer.length;i++)
                             {
                                 ContentValues values = new ContentValues();
                                 String[] random = tokenContainer[i].split("-");
-                                DBHandler dbHandler = new DBHandler(getContext());
-                                SQLiteDatabase sqLiteDatabase = dbHandler.getWritableDatabase();
-                                values.put("key", random[0]);
-                                values.put("value",random[1]);
-                                sqLiteDatabase.insertWithOnConflict("dynamoDB", null, values,sqLiteDatabase.CONFLICT_REPLACE);
-                                sqLiteDatabase.close();
+
+                                try
+                                {
+                                    FileOutputStream fos = getContext().openFileOutput(random[0], Context.MODE_PRIVATE);
+                                    fos.write(random[1].getBytes());
+                                    fos.close();
+                                }catch(IOException ioe){
+                                    Log.e("Insert", ioe.getMessage());
+                                }catch(NullPointerException npe){
+                                    Log.e("Insert", npe.getMessage());
+                                }catch(Exception e){
+                                    Log.e("Insert", e.getMessage());
+                                }
+
                             }
                         }
 
@@ -1174,7 +1274,6 @@ public class SimpleDynamoProvider extends ContentProvider
                     {
                         e.printStackTrace();
                     }
-
 
                 }
 
