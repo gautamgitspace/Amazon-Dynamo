@@ -12,7 +12,7 @@ public class DBHandler extends SQLiteOpenHelper
     private static  String dbName="mainTuple";
     private static int version=1;
 
-    private static final String schema = "CREATE TABLE dynamoDB (key DATA, value DATA, association DATA)";
+    private static final String schema = "CREATE TABLE dynamoDB (key DATA, value DATA UNIQUE ON CONFLICT REPLACE)";
 
     public DBHandler(Context context)
     {
@@ -29,7 +29,7 @@ public class DBHandler extends SQLiteOpenHelper
     public void onUpgrade(SQLiteDatabase db, int obsolete, int latest)
     {
         //logic understood from - http://stackoverflow.com/questions/3675032/drop-existing-table-in-sqlite-when-if-exists-operator-is-not-supported
-        db.execSQL("DROP TABLE IF EXISTS dhtRecords");
+        db.execSQL("DROP TABLE IF EXISTS dynamoDB");
         onCreate(db);
     }
 
